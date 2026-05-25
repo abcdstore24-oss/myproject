@@ -1,0 +1,1 @@
+mysql -h project-abcdstore24-1242.g.aivencloud.com -P 24570 -u avnadmin -p defaultdb
