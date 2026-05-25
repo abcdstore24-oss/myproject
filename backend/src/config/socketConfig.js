@@ -8,6 +8,10 @@ const TestCandidate = require('../models/TestCandidate');
 const { validateToken, deleteToken } = require('../services/mobileCameraTokens');
 
 function initializeSocket(server) {
+  // Maps candidateId → their mobile camera socket
+  // Used for WebRTC signaling routing
+  const mobileSessions = new Map();
+
   const io = socketIO(server, {
     cors: {
       origin: process.env.FRONTEND_URL || 'http://localhost:5173',
@@ -68,6 +72,7 @@ function initializeSocket(server) {
       deleteToken(token);
 
       socket.mobileSession = session;
+      mobileSessions.set(session.candidateId, socket); // ADD
       socket.join(`mobile_${session.assignmentId}`);
 
       console.log(`📱 Mobile camera joined assignment: ${session.assignmentId}`);
@@ -135,6 +140,48 @@ function initializeSocket(server) {
 
       // ADD THIS — candidate also receives their own Camera 2 frames for AI detection
       io.to(`user_${socket.mobileSession.candidateId}`).emit('secondary_camera_frame', payload);
+    });
+
+    // ── WebRTC signaling — pre-exam Camera 2 live preview ─────────────────────
+    // Laptop → phone: "I'm ready, please send an offer"
+    socket.on('webrtc_request_offer', () => {
+      if (!socket.userId) return;
+      const mobileSocket = mobileSessions.get(socket.userId);
+      if (mobileSocket?.connected) {
+        mobileSocket.emit('webrtc_request_offer');
+      }
+    });
+
+    // Phone → laptop: SDP offer
+    socket.on('webrtc_offer', (data) => {
+      if (!socket.mobileSession) return;
+      io.to(`user_${socket.mobileSession.candidateId}`).emit('webrtc_offer', data);
+    });
+
+    // Laptop → phone: SDP answer
+    socket.on('webrtc_answer', (data) => {
+      if (!socket.userId) return;
+      const mobileSocket = mobileSessions.get(socket.userId);
+      if (mobileSocket?.connected) {
+        mobileSocket.emit('webrtc_answer', data);
+      }
+    });
+
+    // ICE candidates — route based on who sent it
+    socket.on('webrtc_ice_candidate', (data) => {
+      if (data.from === 'broadcaster') {
+        // Phone → laptop
+        if (!socket.mobileSession) return;
+        io.to(`user_${socket.mobileSession.candidateId}`)
+          .emit('webrtc_ice_candidate_to_receiver', data);
+      } else {
+        // Laptop → phone
+        if (!socket.userId) return;
+        const mobileSocket = mobileSessions.get(socket.userId);
+        if (mobileSocket?.connected) {
+          mobileSocket.emit('webrtc_ice_candidate_to_broadcaster', data);
+        }
+      }
     });
 
     // ── Recruiter joins test room ─────────────────────────────────────────────
@@ -219,6 +266,7 @@ function initializeSocket(server) {
 
       // Notify recruiter if this was a mobile camera
       if (socket.mobileSession) {
+        mobileSessions.delete(socket.mobileSession.candidateId); // ADD
         const disconnectPayload = {
           assignmentId: socket.mobileSession.assignmentId,
           candidateId: socket.mobileSession.candidateId,

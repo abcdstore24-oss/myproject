@@ -12,6 +12,7 @@ import { useAuth } from '../../context/AuthContext';
 import * as examApi from '../../api/examApi';
 import { useSocket } from '../../context/SocketContext';
 import { useDistanceCheck } from '../../hooks/useDistanceCheck';
+import { useWebRTCReceiver } from '../../hooks/useWebRTCReceiver';
 
 /* ─── Step Config ────────────────────────────────────────── */
 const STEPS = [
@@ -321,7 +322,7 @@ function StepWebcam({ webcamCheck, videoRef, onStart, onVerify, checking, distan
 /* ─── Step: Second Camera ────────────────────────────────── */
 function StepSecondCam({
   qrData, qrLoading, connected,
-  cam2DistanceOk, cam2FrameConfirmed, cam2Frame,
+  cam2DistanceOk, cam2FrameConfirmed, remoteVideoRef,
   onFrameConfirm, onGenerate,
 }) {
   return (
@@ -461,58 +462,41 @@ function StepSecondCam({
             )}
 
             {/* Frame confirmation — shown only once both connected + distance ok */}
-            {connected && cam2Frame && (
+            {connected && (
               <div style={{ marginBottom: 12 }}>
                 <div style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  marginBottom: 6,
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6,
                 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
                     📷 Live Room View
                   </span>
                   <span style={{ fontSize: 11, color: '#34D399', display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <span style={{
-                      width: 6, height: 6, borderRadius: '50%', background: '#34D399', display: 'inline-block',
-                      animation: 'glowPulse 1.5s ease-in-out infinite',
-                    }}/>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#34D399', display: 'inline-block', animation: 'glowPulse 1.5s ease-in-out infinite' }}/>
                     Live
                   </span>
                 </div>
                 <div style={{
                   borderRadius: 12, overflow: 'hidden',
                   border: `2px solid ${cam2DistanceOk ? 'rgba(16,185,129,0.4)' : 'rgba(245,158,11,0.3)'}`,
-                  background: '#000',
-                  position: 'relative',
+                  background: '#000', position: 'relative',
                 }}>
-                  <img
-                    src={cam2Frame}
-                    alt="Camera 2 live view"
+                  <video
+                    ref={remoteVideoRef}
+                    autoPlay playsInline muted
                     style={{ width: '100%', display: 'block', maxHeight: 280, objectFit: 'cover' }}
                   />
                   {!cam2DistanceOk && (
                     <div style={{
-                      position: 'absolute', inset: 0,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
                       background: 'rgba(0,0,0,0.45)',
                     }}>
-                      <div style={{
-                        padding: '8px 14px', borderRadius: 10,
-                        background: 'rgba(245,158,11,0.15)',
-                        border: '1px solid rgba(245,158,11,0.4)',
-                      }}>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: '#FCD34D' }}>
-                          📐 Adjust phone position
-                        </span>
+                      <div style={{ padding: '8px 14px', borderRadius: 10, background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)' }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: '#FCD34D' }}>📐 Adjust phone position</span>
                       </div>
                     </div>
                   )}
                   {cam2DistanceOk && (
-                    <div style={{
-                      position: 'absolute', top: 8, right: 8,
-                      padding: '4px 10px', borderRadius: 8,
-                      background: 'rgba(16,185,129,0.15)',
-                      border: '1px solid rgba(16,185,129,0.4)',
-                    }}>
+                    <div style={{ position: 'absolute', top: 8, right: 8, padding: '4px 10px', borderRadius: 8, background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.4)' }}>
                       <span style={{ fontSize: 11, fontWeight: 700, color: '#34D399' }}>✓ Good position</span>
                     </div>
                   )}
@@ -763,7 +747,7 @@ const PreExamChecks = () => {
 
   const [cam2DistanceOk, setCam2DistanceOk] = useState(false);
   const [cam2FrameConfirmed, setCam2FrameConfirmed] = useState(false);
-  const [cam2Frame, setCam2Frame] = useState(null);
+  const remoteVideoRef = useRef(null);
 
   const { socket, on, off } = useSocket();
 
@@ -786,6 +770,18 @@ const PreExamChecks = () => {
     camera:    'cam1',
     enabled:   currentKey === 'webcam' && webcamCheck.permission,
     intervalMs: 800,
+  });
+
+  // WebRTC — receive Camera 2 live stream during pre-exam positioning
+  useWebRTCReceiver({
+    socket,
+    enabled: currentKey === 'second_cam' && secondCamConnected,
+    onStream: (stream) => {
+      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = stream;
+    },
+    onDisconnect: () => {
+      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+    },
   });
 
   useEffect(() => {
@@ -835,18 +831,12 @@ const PreExamChecks = () => {
         setCam2DistanceOk(data.status === 'ok');
       };
 
-    const handleCam2Frame = (data) => {
-      if (data.frame) setCam2Frame(data.frame);
-    };
-
       on('secondary_camera_status',    handleStatus);
       on('mobile_cam_distance_status', handleCam2Distance);
-      on('secondary_camera_frame',     handleCam2Frame);
 
       return () => {
         off('secondary_camera_status',    handleStatus);
         off('mobile_cam_distance_status', handleCam2Distance);
-        off('secondary_camera_frame',     handleCam2Frame);
       };
     }, [socket]);
 
@@ -1155,7 +1145,7 @@ const PreExamChecks = () => {
                   connected={secondCamConnected}
                   cam2DistanceOk={cam2DistanceOk}
                   cam2FrameConfirmed={cam2FrameConfirmed}
-                  cam2Frame={cam2Frame}
+                  remoteVideoRef={remoteVideoRef}
                   onFrameConfirm={() => setCam2FrameConfirmed(true)}
                   onGenerate={generateQR}
                 />

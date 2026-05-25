@@ -11,6 +11,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { useDistanceCheck } from '../../hooks/useDistanceCheck';
+import { useWebRTCBroadcaster } from '../../hooks/useWebRTCBroadcaster';
 
 const FRAME_INTERVAL_MS = 2000;
 const JPEG_QUALITY = 0.6;
@@ -36,6 +37,13 @@ const MobileCameraPage = () => {
     camera:    'cam2',
     enabled:   status === 'ready',
     intervalMs: 1000,
+  });
+
+  // WebRTC — sends live stream to laptop for pre-exam position preview
+  useWebRTCBroadcaster({
+    socketRef,
+    streamRef,
+    enabled: status === 'ready',
   });
 
   useEffect(() => {
