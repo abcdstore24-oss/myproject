@@ -6,7 +6,7 @@
  * (webcam, second_cam, location) are completely hidden when not required.
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import * as examApi from '../../api/examApi';
@@ -773,15 +773,19 @@ const PreExamChecks = () => {
   });
 
   // WebRTC — receive Camera 2 live stream during pre-exam positioning
+  const handleWebRTCStream = useCallback((stream) => {
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = stream;
+  }, []); // remoteVideoRef is stable — empty deps correct
+
+  const handleWebRTCDisconnect = useCallback(() => {
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+  }, []);
+
   useWebRTCReceiver({
     socket,
     enabled: currentKey === 'second_cam' && secondCamConnected,
-    onStream: (stream) => {
-      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = stream;
-    },
-    onDisconnect: () => {
-      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-    },
+    onStream:     handleWebRTCStream,
+    onDisconnect: handleWebRTCDisconnect,
   });
 
   useEffect(() => {
